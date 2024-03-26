@@ -2,41 +2,18 @@
 #include <cmath>
 #include "Content.h"
 #include "NeuralNetwork.h"
-#include "json.hpp"
-#include "fstream"
+//#include "json.hpp"
+//#include "fstream"
+//#include "temp.h"
+#include "Eigen/Core"
 
-Content createRandContent () {
-    Content content;
-    content.title = "Random content";
-    for (double & feature : content.features) {
-        feature = (double) rand() / RAND_MAX;
-    }
-    return content;
-}
 
-double evklidDistance(const Content &point1, const Content &point2) {
-    double sum_diff = 0.0;
-    for (unsigned i = 0; i < FEATURES; ++i) {
-        double diff = point1.features[i] - point2.features[i];
-        sum_diff += diff * diff;
-    }
-    return std::sqrt(sum_diff);
-}
 
-double evklidSimilarity(const Content &point1, const Content &point2) {
-    double distance = evklidDistance(point1, point2);
-    double max_distance = std::sqrt(FEATURES);
-    return 1.0 - (distance / max_distance);
-}
-
-void from_json(const nlohmann::json &j, Content &c) {
-    j.at("title").get_to(c.title);
-    j.at("features").get_to(c.features);
-}
 
 int main() {
 
-    srand(time(0));
+    srand(time(nullptr));
+    /*
     std::ifstream file("../data.json");
     nlohmann::json j;
     file >> j;
@@ -62,26 +39,117 @@ int main() {
         }
         Y_train.push_back(similarity);
     }
+    */
 
-
-    auto f = [](double x) {
-        return 1.0 / (1.0 + std::exp(-x));
+#pragma region testCode
+    auto F = [](double x) -> double {
+        return x * x;
     };
 
-    auto df = [](double x) {
-        return std::exp(x) / (std::exp(2 * x) + 2 * std::exp(x) + 1);
+    MatrixXd weightedSums(1, 3);
+    weightedSums << 0, 0, 0;
+    MatrixXd activations(1, 3);
+    activations << 0, 0, 0;
+
+
+    MatrixXd x(1, 2);
+    x << 1, 2;
+
+    MatrixXd y(1, 3);
+    y << 0, 100, 0;
+
+    MatrixXd h(1, 3);
+    h << 0, 0, 0;
+    MatrixXd w(2, 3);
+    w << 1, 2, 3,
+            1, 2, 3;
+    MatrixXd b(1, 3);
+    b << 1, 1, 1;
+
+    std::cout << "w:\n" << w << std::endl;
+    std::cout << "b:\n" << b << std::endl;
+    //std::cout << "x:\n" << x << std::endl;
+
+    weightedSums = x * w + b;
+    std::cout << "weightedSums:\n" << weightedSums << std::endl;
+
+    activations = weightedSums.unaryExpr(F);
+    std::cout << "activations:\n" << activations << std::endl;
+
+    h = activations;
+
+#pragma endregion // testCode
+
+    auto dF = [](double x) -> double {
+        return 2 * x;
     };
 
-    NeuralNetwork model(10, 1, f, df, 10, 3);
-    model.train(X_train, Y_train, 100000, 0.0001, 0.1);
-    std::cout << "Training finished" << std::endl;
-    for (int i = 0; i < 10; ++i) {
-        auto a = createRandContent();
-        auto b = createRandContent();
-        std::cout << "Predicted value: \t" << model.predict(a, b) << std::endl;
-        std::cout << "Real value: \t\t" << evklidSimilarity(a, b) << std::endl;
-        std::cout << "----------------------------------------------------------------" << std::endl;
-    }
-    //model.print();
+    auto dLoss = [](double pred, double target) -> double {
+        return 2 * (pred - target);
+    };
+
+    print("h:");
+    print(h);
+
+    print("y:");
+    print(y);
+
+    MatrixXd dLossMatrix(1, h.cols());
+
+
+    for (int j = 0; j < h.cols(); ++j)
+        dLossMatrix(0, j) = dLoss(h(0, j), y(0, j));
+
+
+    MatrixXd de_dh = dLossMatrix;
+
+    print("de_dh:");
+    print(de_dh);
+
+    print("weightedSums.unaryExpr(dF):");
+    print(weightedSums.unaryExpr(dF));
+
+    // вход поэлементно умноженный на производную функции активации по всем взвешенным суммам:
+    MatrixXd de_dt = (de_dh.array() * weightedSums.unaryExpr(dF).array()).matrix();
+    print("de_dt:");
+    print(de_dt);
+
+    // градиент весов
+    MatrixXd de_dw = x.transpose() * de_dt;
+
+    print("x.transpose():");
+    print(x.transpose());
+
+    print("de_dw:");
+    print(de_dw);
+
+    // градиент смещений
+    MatrixXd de_db = de_dt;
+
+    print("de_db:");
+    print(de_db);
+
+    // градиент входа
+
+    MatrixXd de_dx = de_dt * w.transpose();
+
+    print("w.transpose():");
+    print(w.transpose());
+
+
+    print("de_dx:");
+    print(de_dx);
+
+    NeuralNetwork nn;
+    auto output = nn.forwardPropagation(x);
+
+    MatrixXd dLossMatrix1(1, output.cols());
+
+
+    for (int j = 0; j < output.cols(); ++j)
+        dLossMatrix1(0, j) = dLoss(output(0, j), y(0, j));
+
+    nn.backPropagation(dLossMatrix1);
+
 
 }
