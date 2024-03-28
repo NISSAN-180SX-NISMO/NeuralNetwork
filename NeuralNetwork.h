@@ -21,52 +21,101 @@ using namespace std;
 
 #define sout(x) std::cout << "im here " << x << std::endl
 
+#ifndef HIDDEN_ACTIVATION_FUNC
+#ifndef HIDDEN_ACTIVATION_FUNC_DERIVATIVE
+#ifndef LEAKY_RELU_SLOPE
+#define LEAKY_RELU_SLOPE 0.01
+#define HIDDEN_ACTIVATION_FUNC [](double a) -> double {   \
+                return std::max(LEAKY_RELU_SLOPE * a, a); \
+                }
+#define HIDDEN_ACTIVATION_FUNC_DERIVATIVE [](double a) -> double { \
+                return a > 0 ? 1 : LEAKY_RELU_SLOPE;               \
+                }
+#endif
+#endif
+#endif
+
+#ifndef OUTPUT_ACTIVATION_FUNC
+#ifndef OUTPUT_ACTIVATION_FUNC_DERIVATIVE
+#define OUTPUT_ACTIVATION_FUNC [](double a) -> double { \
+                return 1 / (1 + std::exp(-a));          \
+                }
+#define OUTPUT_ACTIVATION_FUNC_DERIVATIVE [](double a) -> double {             \
+                return OUTPUT_ACTIVATION_FUNC(a) * (1 - OUTPUT_ACTIVATION_FUNC(a)); \
+                }
+#endif
+#endif
+
+#ifndef ROOT_MEAN_SQUARE_ERROR_FUNC
+#ifndef ROOT_MEAN_SQUARE_ERROR_FUNC_DERIVATIVE
+#define ROOT_MEAN_SQUARE_ERROR_FUNC [](const Eigen::MatrixXd &pred, const Eigen::MatrixXd &target) -> double { \
+                if (pred.rows() != target.rows() || pred.cols() != target.cols()) { \
+                    throw std::invalid_argument("Matrices must have the same size"); \
+                } \
+                return (pred - target).array().pow(2).mean(); \
+                }
+#define ROOT_MEAN_SQUARE_ERROR_FUNC_DERIVATIVE [](const Eigen::MatrixXd &pred, const Eigen::MatrixXd &target) -> double { \
+                if (pred.rows() != target.rows() || pred.cols() != target.cols()) { \
+                    throw std::invalid_argument("Matrices must have the same size"); \
+                } \
+                return (2 * (pred - target).array()).mean(); \
+                }
+#endif
+#endif
+
+
 class NeuralNetwork {
 private:
-    vector<MatrixXd> weights;                // Вектор матриц весов для каждого слоя
-    vector<MatrixXd> biases;                // Вектор векторов смещения для каждого слоя
-    vector<MatrixXd> wd_amounts;           // Вектор векторов взвешенных сумм для каждого слоя
-    vector<MatrixXd> activations;           // Вектор векторов активаций для каждого слоя
-    function<double(double)> f_activation;    // Функция активации
-    function<double(double)> df_activation;    // Функция активации
-    function<double(double, double)> f_loss;  // Функция потерь
-public:
-    vector<MatrixXd> x_train;                // Вектор векторов обучающих данных
-    vector<double> y_train;
+    struct Layer {
+        std::shared_ptr<MatrixXd> input;    // Входной вектор-строка
+        MatrixXd weights;                   // Матрица весов
+        MatrixXd biases;                    // Вектор-строка смещений
+        MatrixXd amounts;                   // Вектор-строка взвешенных сумм
+        MatrixXd activations;               // Вектор-строка активаций
+    };
+    std::vector<Layer> layers;              // Вектор слоев
+    MatrixXd input;                         // Входной вектор-строка
+    MatrixXd x_train;                       // Вектор векторов-строк обучающих входных данных
+    MatrixXd y_train;                       // Вектор-строка обучающих выходных данных
 
-    void setX(const vector<vector<double>> &X_train) {
-        for (auto &x: X_train) {
-            x_train.emplace_back(x.size(), 1);
-            for (size_t j = 0; j < x.size(); ++j) {
-                x_train.back()((long long) j, 0) = x[j];
+    void setXTrain(const std::vector<std::vector<double>> &x_train) {
+        // Создаем матрицу нужного размера
+        this->x_train = Eigen::MatrixXd(x_train.size(), x_train[0].size());
+
+        // Заполняем матрицу
+        for (size_t i = 0; i < x_train.size(); ++i) {
+            for (size_t j = 0; j < x_train[0].size(); ++j) {
+                this->x_train(i, j) = x_train[i][j];
             }
         }
     }
 
-    void setY(const vector<double> &Y_train) {
-        y_train.resize(Y_train.size());
-        for (size_t i = 0; i < Y_train.size(); ++i) {
-            y_train[i] = Y_train[i];
+    void setYTrain(const std::vector<double> &y_train) {
+        // Создаем матрицу нужного размера
+        this->y_train = Eigen::MatrixXd(1, y_train.size());
+
+        // Заполняем матрицу
+        for (size_t i = 0; i < y_train.size(); ++i) {
+            this->y_train(0, i) = y_train[i];
         }
     }
 
 public:
-    MatrixXd forwardPropagation(const MatrixXd &input) {
-        MatrixXd result = input;
-        activations.clear();
-        wd_amounts.clear();
-
-        activations.emplace_back(result);
-        for (size_t i = 0; i < weights.size(); ++i) {
-            wd_amounts.emplace_back(result * weights[i] + biases[i]);
-            activations.emplace_back(wd_amounts.back().unaryExpr(f_activation));
-            result = activations.back();
+    MatrixXd forwardPropagation() {
+        auto layerInput = this->input;
+        for (auto &layer: layers) {
+            layer.amounts = layerInput * layer.weights + layer.biases;
+            layer.activations = layer.amounts.unaryExpr(HIDDEN_ACTIVATION_FUNC);
+            layerInput = layer.activations;
         }
-        return result;
+        //return layers.back().amounts.unaryExpr(OUTPUT_ACTIVATION_FUNC);
+        return layers.back().amounts.unaryExpr(HIDDEN_ACTIVATION_FUNC);
     }
 
-    std::pair<MatrixXd, MatrixXd> calcWeightsAndBiasesGradient(const MatrixXd &_output, const MatrixXd &_input, const MatrixXd &_wd_amount) {
-        auto bieasesGradient = (_output.array() * _wd_amount.unaryExpr(df_activation).array()).matrix();
+    std::pair<MatrixXd, MatrixXd>
+    calcWeightsAndBiasesGradient(const MatrixXd &_output, const MatrixXd &_input, const MatrixXd &_wd_amount) {
+        auto bieasesGradient = (_output.array() *
+                                _wd_amount.unaryExpr(HIDDEN_ACTIVATION_FUNC_DERIVATIVE).array()).matrix();
 
         auto weightsGradient = _input.transpose() * bieasesGradient;
         return {weightsGradient, bieasesGradient};
@@ -76,69 +125,139 @@ public:
         return biasesGradient * weights.transpose();
     }
 
-    void backPropagation(const MatrixXd &avgLoss) {
-        auto output = avgLoss;
-        auto weight = this->weights.end() - 1;
-        auto wd_amount = this->wd_amounts.end() - 1;
-        auto layer = this->activations.end() - 1;
-        for(; layer != activations.begin(); --layer, --weight) {
-            auto [weightsGradient, biasesGradient] = calcWeightsAndBiasesGradient(output, *layer,  *(wd_amount));
-            auto inputGradient = calcInputGradient(biasesGradient, *weight);
-            output = inputGradient;
+
+
+    void backPropagation(MatrixXd output, double learningRate, double lambda) {
+        for (int i = layers.size() - 1; i >= 0; --i) {
+            auto [weightsGradient, biasesGradient] = calcWeightsAndBiasesGradient(output, *(layers[i].input),
+                                                                                  layers[i].amounts);
+            output = calcInputGradient(biasesGradient, layers[i].weights);
+
+            layers[i].weights -= learningRate * (weightsGradient + lambda * layers[i].weights);
+            layers[i].biases -= learningRate * biasesGradient;
         }
     }
 
-    explicit NeuralNetwork() {
-        f_activation = [](double x) -> double {
-            return x * x;
-        };
-        df_activation = [](double x) -> double {
-            return 2 * x;
-        };
-        MatrixXd w(2, 3);
-        w <<
-          1, 2, 3,
-                1, 2, 3;
+    explicit NeuralNetwork(const vector<int> &layersSize) {
+        this->input = MatrixXd(1, layersSize[0]);
+        for (size_t i = 1; i < layersSize.size(); ++i) {
+            auto randomWeights = MatrixXd::Random(layersSize[i - 1], layersSize[i]);
+            auto shiftWeights = MatrixXd::Constant(layersSize[i - 1], layersSize[i], 1.0);
+            auto normalizedWeights = (randomWeights + shiftWeights) * 0.00001 / 2;
 
-        MatrixXd b(1, 3);
-        b << 1, 1, 1;
+            auto randomBiases = MatrixXd::Random(1, layersSize[i]);
+            auto shiftBiases = MatrixXd::Constant(1, layersSize[i], 1.0);
+            auto normalizedBiases = (randomBiases + shiftBiases) * 0.00001 / 2;
 
-        this->weights.emplace_back(w);
-        this->biases.emplace_back(b);
+            this->layers.emplace_back(Layer{
+                    std::make_shared<MatrixXd>(i == 1 ? this->input : this->layers.back().activations),
+//                    normalizedWeights,
+//                    normalizedBiases,
+                    MatrixXd::Random(layersSize[i - 1], layersSize[i]),
+                    MatrixXd::Random(1, layersSize[i]),
+                    MatrixXd(1, layersSize[i]),
+                    MatrixXd(1, layersSize[i])
+
+            });
+        }
+    }
+
+    class Batcher {
+    private:
+        std::shared_ptr<MatrixXd> x_train;
+        std::shared_ptr<MatrixXd> y_train;
+
+        std::vector<int> indices;
+        std::random_device randomDevice;
+        std::mt19937 generator;
+    public:
+        Batcher(const MatrixXd &x_train, const MatrixXd &y_train) {
+            this->x_train = std::make_shared<MatrixXd>(x_train);
+            this->y_train = std::make_shared<MatrixXd>(y_train);
+
+            this->indices.resize(this->x_train->rows());
+            std::iota(indices.begin(), indices.end(), 0);
+            generator = std::mt19937(randomDevice());
+        }
+
+        std::pair<MatrixXd, MatrixXd> getBatch(size_t size) {
+            std::shuffle(indices.begin(), indices.end(), generator);
+            indices.resize(size);
+
+            Eigen::MatrixXd x_train_batch(size, this->x_train->cols());
+            Eigen::MatrixXd y_train_batch(1, size);
+            for (size_t i = 0; i < size; ++i) {
+                x_train_batch.row(i) = this->x_train->row(indices[i]);
+                y_train_batch(0, i) = this->y_train->operator()(0, indices[i]);
+            }
+            return {x_train_batch, y_train_batch};
+        }
+
+        MatrixXd getPredictions(MatrixXd &input, const MatrixXd &x_train_batch,
+                                const std::function<MatrixXd()> &forwardPropagation) {
+            size_t size = x_train_batch.rows();
+            Eigen::MatrixXd predictions(1, size);
+
+            for (size_t i = 0; i < size; ++i) {
+                input = x_train_batch.row(i);
+                auto prediction = forwardPropagation();
+                for (size_t j = 0; j < prediction.cols(); ++j) {
+                    predictions(0, i) = prediction(0, j);
+                }
+            }
+            return predictions;
+        }
+
     };
 
-    explicit NeuralNetwork(
-            const vector<int> &layersSize,
-            function<double(double)> f_activation,
-            function<double(double, double)> f_loss
-    ) :
-            f_activation(std::move(f_activation)),
-            f_loss(std::move(f_loss)) {
-        for (size_t i = 1; i < layersSize.size(); ++i) {
-            auto randomMatrix = MatrixXd::Random(layersSize[i - 1], layersSize[i]);
-            auto shiftMatrix = MatrixXd::Constant(layersSize[i - 1], layersSize[i], 1.0);
-            auto normalizedWeights = (randomMatrix + shiftMatrix) * 0.01 / 2;
-            weights.emplace_back(normalizedWeights);
-            biases.emplace_back(MatrixXd::Random(1, layersSize[i]));
+    void train(
+            size_t iters,
+            std::vector<std::vector<double>> x_train,
+            std::vector<double> y_train,
+            double learningRate,
+            double lambda
+    ) {
+        setXTrain(x_train);
+        setYTrain(y_train);
+
+        Batcher batcher(this->x_train, this->y_train);
+        std::cout << std::fixed;
+        std::cout.precision(20);
+
+        for (size_t iter = 0; iter < iters; ++iter) {
+
+            auto [x_train_batch, y_train_batch] = batcher.getBatch(100);
+
+            size_t size = x_train_batch.rows();
+            Eigen::MatrixXd predictions(1, size);
+
+            for (size_t i = 0; i < size; ++i) {
+                this->input = x_train_batch.row(i);
+                auto prediction = forwardPropagation();
+                for (size_t j = 0; j < prediction.cols(); ++j) {
+                    predictions(0, i) = prediction(0, j);
+                }
+            }
+
+            auto loss = ROOT_MEAN_SQUARE_ERROR_FUNC(predictions, y_train_batch);
+            auto lossBatches = (2 * (predictions - y_train_batch).array()).matrix();
+            for (size_t i = 0; i < lossBatches.cols(); ++i) {
+                backPropagation(lossBatches.col(i), learningRate, lambda);
+
+            }
+
+            std::cout << "Iter: " << iter << " Loss: " << loss << std::endl;
         }
     }
 
-    void train(size_t iters, double learningRate, double forgotCoef) {
-
-    }
-
-    void setTrainDataSet(
-            const vector<vector<double>> &X_train,
-            const vector<double> &Y_train
-    ) {
-        setX(X_train);
-        setY(Y_train);
-    }
-
-
-
-    double predict(Content content, Content content1) {
-
+    double predict (const std::vector<double> &x) {
+        if (x.size() != layers[0].weights.rows()) {
+            throw std::invalid_argument("Input size must be equal to the input layer size");
+        }
+        for (size_t i = 0; i < x.size(); ++i) {
+            input(0, i) = x[i];
+        }
+        return forwardPropagation()(0, 0);
     }
 };
 
