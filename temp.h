@@ -39,5 +39,44 @@ void from_json(const nlohmann::json &j, Content &c) {
     j.at("features").get_to(c.features);
 }
 
+std::pair<std::vector<std::vector<double>>, std::vector<double>>& loadData(const std::string& filename) {
+    std::ifstream file(filename);
+    nlohmann::json j;
+    file >> j;
+
+    std::vector<std::vector<double>> X_train;
+    std::vector<double> Y_train;
+
+    for (const auto &item: j["data"]) {
+        Content point1 = item["point1"].get<Content>();
+        Content point2 = item["point2"].get<Content>();
+        double similarity = item["similarity"].get<double>();
+
+        X_train.push_back(std::vector<double>());
+        for (unsigned i = 0; i < FEATURES * 2; ++i) {
+            i < FEATURES ?
+            X_train.back().push_back(point1.features[i])
+                         :
+            X_train.back().push_back(point2.features[i - FEATURES]);
+        }
+        Y_train.push_back(similarity);
+    }
+
+    return *new std::pair<std::vector<std::vector<double>>, std::vector<double>>{X_train, Y_train};
+}
+
+std::pair<std::vector<double>, std::pair<Content, Content>> createTestVector() {
+    Content test1 = createRandContent();
+    Content test2 = createRandContent();
+    std::vector<double> test;
+    for (unsigned i = 0; i < 2 * FEATURES; ++i) {
+        i < FEATURES ?
+        test.push_back(test1.features[i])
+                     :
+        test.push_back(test2.features[i - FEATURES]);
+    }
+    return {test, {test1, test2}};
+}
+
 #endif //OCULUZRECSYSTEST_TEMP_H
 

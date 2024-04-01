@@ -143,18 +143,18 @@ public:
         for (size_t i = 1; i < layersSize.size(); ++i) {
             auto randomWeights = MatrixXd::Random(layersSize[i - 1], layersSize[i]);
             auto shiftWeights = MatrixXd::Constant(layersSize[i - 1], layersSize[i], 1.0);
-            auto normalizedWeights = (randomWeights + shiftWeights) * 0.00001 / 2;
+            auto normalizedWeights = (randomWeights + shiftWeights) * 0.01 / 2;
 
             auto randomBiases = MatrixXd::Random(1, layersSize[i]);
             auto shiftBiases = MatrixXd::Constant(1, layersSize[i], 1.0);
-            auto normalizedBiases = (randomBiases + shiftBiases) * 0.00001 / 2;
+            auto normalizedBiases = (randomBiases + shiftBiases) * 0.01 / 2;
 
             this->layers.emplace_back(Layer{
                     std::make_shared<MatrixXd>(i == 1 ? this->input : this->layers.back().activations),
-//                    normalizedWeights,
-//                    normalizedBiases,
-                    MatrixXd::Random(layersSize[i - 1], layersSize[i]),
-                    MatrixXd::Random(1, layersSize[i]),
+                    normalizedWeights,
+                    normalizedBiases,
+                    //MatrixXd::Random(layersSize[i - 1], layersSize[i]),
+                    //MatrixXd::Random(1, layersSize[i]),
                     MatrixXd(1, layersSize[i]),
                     MatrixXd(1, layersSize[i])
 
